@@ -61,6 +61,7 @@ class IcmpTunnel:
         return load
 
 
+'''
 obj = IcmpTunnel()
 dst = input("Enter the destination IP address: ")
 while True:
@@ -70,3 +71,4 @@ while True:
         print("No response received.")
     else:
         print(f"Received response: {load.decode()}")
+        '''

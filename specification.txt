@@ -7,3 +7,14 @@ gui: all module, related to QT
 util: if a module aims to solve a problem (called utilities ), it should be placed here. Such as icmp api, or checksum modules.
 
 root directory: only the main drive of the program, or docs should be placed here.
+
+
+
+
+
+memo:
+把icmp绑到gui全都在gui文件夹下执行，program—main只管调用-》跑。
+
+
+
+
