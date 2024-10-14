@@ -1,4 +1,6 @@
+from multiprocessing.connection import PipeConnection
 from scapy.all import IP, ICMP, Raw, send, AsyncSniffer
+from multiprocessing import Process, Pipe
 import time
 import socket
 import threading
@@ -85,12 +87,22 @@ class IcmpRecvFuture:
         return res
 
 
-class IcmpTunnel:
-    response_future: dict[IcmpRecvFuture, tuple[bytes | None, float]] = dict()
+class Server:
+    def __init__(self, port):
+        self.port = port
+        self.incoming = list()
+        self.pips = Pipe()
+
+    def iter(self):
+        return iter(self.incoming)
+
+
+class IcmpHost:
+    response_future: dict[IcmpRecvFuture, tuple[PipeConnection, float]] = dict()
     incoming_request: list[tuple[IcmpRecvFuture, bytes, float]] = list()
     count: int = 0
 
-    handler: dict[int, callable] = dict()
+    handler: dict[int, PipeConnection] = dict()
 
     ttl = 120
 
@@ -104,10 +116,12 @@ class IcmpTunnel:
         ttl_thread = threading.Thread(target=self.ttl_guild)
         ttl_thread.start()
 
-    def bind_listener(self, port, callback):
-        self.handler[port] = callback
+    def bind(self, port: int) -> PipeConnection:
+        server = Server(port)
+        self.handler[server.port] = server.pips[0]
+        return server.pips[1]
 
-    def send_request(self, ip, port, data):
+    def send_request(self, ip, port, data) -> None:
         self.request(ip, port, data)
 
     def response(self, future: IcmpRecvFuture, load) -> None:
@@ -134,7 +148,7 @@ class IcmpTunnel:
             self.response_future[future] = (data.load, time.time())
         else:
             # self.incoming_request.append((future, data.load, time.time()))
-            self.handler[data.port](data)
+            self.handler[data.port].send(data)
 
     def check_recv(self, future: IcmpRecvFuture):
         if future in self.response_future:
@@ -151,13 +165,17 @@ class IcmpTunnel:
                     self.response_future.pop(future)
 
 
-def display(data):
-    print(data)
+def display(pip: PipeConnection):
+    while True:
+        data = pip.recv()
+        print(data)
 
 
 if __name__ == "__main__":
-    a = IcmpTunnel()
-    a.bind_listener(514, display)
-    a.send_request(input("dst"), 514, b"hello world")
+    a = IcmpHost()
+    display_server = a.bind(514)
+    threading.Thread(target=lambda: display(display_server)).start()
+
+    a.send_request(input("dst:"), 514, b"hello")
     while True:
         pass
