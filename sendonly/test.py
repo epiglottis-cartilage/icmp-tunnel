@@ -34,9 +34,9 @@ class IcmpData:
         return f"[{self.ip}:], Code:{self.code}, Seq:{self.seq}, ID:{self.id}\n Load:{self.load}"
 
     def build(self):
-        load = +self.port.to_bytes(2, "big") + self.seq.to_bytes(8, "big") + self.load
+        load = self.port.to_bytes(2, "big") + self.seq.to_bytes(8, "big") + self.load
         packet = IP(dst=self.ip) / ICMP(type=0, code=114, id=514, seq=1919) / load
-        print(packet.summary())
+        # print(packet.summary())
         return packet
 
     def resolve(packet):
@@ -48,7 +48,7 @@ class IcmpData:
             return None
 
         res = IcmpData()
-        res.ip = packet[IP].src
+        res.ip = str(packet[IP].src)
         res.port = int.from_bytes(packet[Raw].load[:2], "big")
         res.seq = int.from_bytes(packet[Raw].load[2:10], "big")
         res.load = packet[Raw].load[10:]
@@ -69,11 +69,11 @@ class IcmpRecvFuture:
         self,
         ip: str,
         port: int,
-        id: int,
+        seq: int,
     ):
         self.ip = ip
         self.port = port
-        self.id = id
+        self.seq = seq
 
     def with_load(self, load: bytes):
         res = IcmpData()
@@ -88,9 +88,9 @@ class IcmpRecvFuture:
 class IcmpTunnel:
     response_future: dict[IcmpRecvFuture, tuple[bytes | None, float]] = dict()
     incoming_request: list[tuple[IcmpRecvFuture, bytes, float]] = list()
-    count: dict[str, int] = dict()
+    count: int = 0
 
-    handler = dict[int, callable]
+    handler: dict[int, callable] = dict()
 
     ttl = 120
 
@@ -107,7 +107,7 @@ class IcmpTunnel:
     def bind_listener(self, port, callback):
         self.handler[port] = callback
 
-    def bind_client(self, ip, port, data):
+    def send_request(self, ip, port, data):
         self.request(ip, port, data)
 
     def response(self, future: IcmpRecvFuture, load) -> None:
@@ -151,9 +151,13 @@ class IcmpTunnel:
                     self.response_future.pop(future)
 
 
+def display(data):
+    print(data)
+
+
 if __name__ == "__main__":
     a = IcmpTunnel()
-    for _ in range(10):
-        a.send("10.161.0.1", b"114514")
+    a.bind_listener(514, display)
+    a.send_request(input("dst"), 514, b"hello world")
     while True:
         pass
