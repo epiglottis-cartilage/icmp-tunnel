@@ -33,7 +33,7 @@ class IcmpData:
     load: bytes
 
     def __str__(self):
-        return f"[{self.ip}:], Code:{self.code}, Seq:{self.seq}, ID:{self.id}\n Load:{self.load}"
+        return f"\n IcmpData{{ {self.ip}:{self.port} => {self.load} }}"
 
     def build(self):
         load = self.port.to_bytes(2, "big") + self.seq.to_bytes(8, "big") + self.load
@@ -144,7 +144,7 @@ class IcmpHost:
             return
 
         future = data.to_future()
-        if future.id in self.response_future:
+        if future in self.response_future:
             self.response_future[future] = (data.load, time.time())
         else:
             # self.incoming_request.append((future, data.load, time.time()))
@@ -167,7 +167,7 @@ class IcmpHost:
 
 def display(pip: PipeConnection):
     while True:
-        data = pip.recv()
+        data: IcmpData = pip.recv()
         print(data)
 
 
