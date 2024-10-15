@@ -314,14 +314,19 @@ class IcmpHost:
                     print("IcmpHost err:", e)
 
 
-def display_server(request: IcmpData) -> bytes:
-    print("recv:", request)
-    return b"response: " + request.load[:5] + b"..."
+def debug_server(request: IcmpData) -> bytes:
+    print("\n [Server] recv:", request)
+    return (
+        b"response to "
+        + request.load[:5]
+        + b"... "
+        + f"(len={len(request.load)})".encode()
+    )
 
 
 if __name__ == "__main__":
     a = IcmpHost(IcmpDataMerger.new(IcmpCapture.new()))
-    a.bind(10086, display_server)
+    a.bind(10086, debug_server)
 
     i = 0
     while True:
