@@ -288,7 +288,6 @@ class IcmpHost:
             except Exception as e:
                 print("IcmpHost ending:", e)
                 break
-            print(pack)
             future = pack.to_future()
             if pack.port == 0:
                 if self.waiting_for_response.get(future) is not None:
@@ -314,12 +313,14 @@ class IcmpHost:
 
 
 def display_server(request: IcmpData) -> bytes:
-    print(request)
-    return request.load
+    print("recv:", request)
+    return b"response: " + request.load[:5] + b"..."
 
 
 if __name__ == "__main__":
     a = IcmpHost(IcmpDataMerger.new(IcmpCapture.new()))
     a.bind(10086, display_server)
 
-    a.request(input("dst:"), 10086, b"hello world" * 10000)
+    i = 0
+    while True:
+        a.request(input("dst:"), 10086, (str(i) * 100).encode())
