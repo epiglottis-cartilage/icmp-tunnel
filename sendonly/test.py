@@ -294,4 +294,4 @@ if __name__ == "__main__":
     a = IcmpHost(IcmpDataMerger.new(IcmpCapture.new()))
     a.bind(10068, display_server)
 
-    a.request("192.168.1.1", 10068, b"hello world" * 1000)
+    a.request(input("dst:"), 10086, b"hello world" * 1000)
