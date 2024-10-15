@@ -2,8 +2,6 @@ from multiprocessing.connection import PipeConnection
 from typing import Optional, Callable
 from scapy.all import IP, ICMP, Raw, send, AsyncSniffer, sniff
 from multiprocessing import Pipe
-
-# import time
 import socket
 import threading
 import random
@@ -32,6 +30,7 @@ LOAD_SIZE_LIMIT = 1415
 class IcmpPacketFuture:
     """
     由发送者管理
+    用于区分不同包
     服务端需要原样返回！
     """
 
@@ -77,12 +76,22 @@ class IcmpPacketFuture:
 
 
 class IcmpData:
+    """
+    自定义协议
+    使用icmp原有字段区分: type=0, code=114, id=514
+    数据部分头部：
+
+    port: u32
+    data_slice_cnt: u64
+    identifier: unfixed length
+    """
+
     ip: str
     port: int
+    data_slice_cnt: int
 
     identifier: IcmpPacketFuture
 
-    data_slice_cnt: int
     load: bytes
 
     def __init__(self, ip: str, port: int, identifier: IcmpPacketFuture, load: bytes):
@@ -113,7 +122,7 @@ class IcmpData:
     def shrink(packets: list["IcmpData"]):
         """
         合并数据包
-        第一个为负数包
+        传入sort后的数据包列表（第一个data_slice_cnt为负数）
         """
         if len(packets) == 0:
             raise ValueError("empty packet list")
@@ -138,8 +147,8 @@ class IcmpData:
 
         load = (
             self.port.to_bytes(4, "big")
-            + self.identifier.to_bytes()
             + self.data_slice_cnt.to_bytes(8, "big", signed=True)
+            + self.identifier.to_bytes()
             + self.load
         )
         packet = (
@@ -153,11 +162,11 @@ class IcmpData:
     def parse(packet) -> Optional["IcmpData"]:
         if packet.haslayer(ICMP):
             src_ip = packet[IP].src
-            dst_ip = packet[IP].dst
+            # dst_ip = packet[IP].dst
 
             code = packet[ICMP].code
             id = packet[ICMP].id
-            seq = packet[ICMP].seq
+            # seq = packet[ICMP].seq
 
             if not (int(code) == 114 and int(id) == 514):
                 return None
@@ -165,10 +174,11 @@ class IcmpData:
             load = packet[Raw].load
 
             port = int.from_bytes(load[:4], "big")
-            indentifier, data = IcmpPacketFuture.from_bytes(bytes(load[4:]))
+            slice_cnt = int.from_bytes(load[4:12], "big", signed=True)
 
-            slice_cnt = int.from_bytes(data[:8], "big", signed=True)
-            res = IcmpData(src_ip, port, indentifier, data[8:])
+            indentifier, data = IcmpPacketFuture.from_bytes(bytes(load[12:]))
+            res = IcmpData(src_ip, port, indentifier, data)
+
             res.data_slice_cnt = slice_cnt
             return res
         return None
@@ -182,6 +192,10 @@ class IcmpData:
 
 
 class IcmpCapture:
+    """
+    抓包
+    """
+
     def __init__(self, send_to: PipeConnection):
         self.send_to = send_to
         self.listener = threading.Thread(
@@ -207,6 +221,10 @@ class IcmpCapture:
 
 
 class IcmpDataMerger:
+    """
+    合并同一个 identifier 的数据包
+    """
+
     def __init__(self, recv: PipeConnection, send: PipeConnection):
         self.recv = recv
         self.send = send
@@ -253,6 +271,10 @@ class IcmpDataMerger:
 
 
 class IcmpHost:
+    """
+    分离开不同端口
+    """
+
     def __init__(self, recv: PipeConnection):
         self.seq_per_ip: dict[str, int] = {}
         self.waiting_for_response: dict[IcmpPacketFuture, PipeConnection] = {}
@@ -319,6 +341,9 @@ class IcmpHost:
 
 
 def debug_server(request: IcmpData) -> bytes:
+    """
+    server 接受IcmDdata, 返回bytes
+    """
     print("\n [Server] recv:", request)
     return (
         b"response to "
@@ -331,7 +356,6 @@ def debug_server(request: IcmpData) -> bytes:
 if __name__ == "__main__":
     a = IcmpHost(IcmpDataMerger.new(IcmpCapture.new()))
     a.bind(10086, debug_server)
-
     i = 0
     while True:
         pip = a.request(input("dst:"), 10086, (str(i) * 2000).encode())
