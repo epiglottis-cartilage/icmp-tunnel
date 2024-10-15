@@ -294,7 +294,7 @@ class IcmpHost:
             if pack.port == 0:
                 if self.waiting_for_response.get(future) is not None:
                     try:
-                        self.waiting_for_response[future].send(pack)
+                        self.waiting_for_response[future].send(pack.load)
                     except Exception as e:
                         print("IcmpHost err:", e)
                         pass
@@ -325,5 +325,6 @@ if __name__ == "__main__":
 
     i = 0
     while True:
-        a.request(input("dst:"), 10086, (str(i) * 100).encode())
+        pip = a.request(input("dst:"), 10086, (str(i) * 100).encode())
+        print(pip.recv())
         i += 1
