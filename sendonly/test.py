@@ -26,7 +26,7 @@ def get_local_ip() -> str:
 Local_ip = get_local_ip()
 Local_ip_int = int.from_bytes(socket.inet_aton(Local_ip))
 
-LOAD_SIZE_LIMIT = 1280
+LOAD_SIZE_LIMIT = 1415
 
 
 class IcmpPacketFuture:
@@ -142,7 +142,11 @@ class IcmpData:
             + self.data_slice_cnt.to_bytes(8, "big", signed=True)
             + self.load
         )
-        packet = IP(dst=self.ip) / ICMP(type=0, code=114, id=514, seq=1919) / load
+        packet = (
+            IP(dst=self.ip)
+            / ICMP(type=0, code=114, id=514, seq=self.identifier.sequence & 0xFFFF)
+            / load
+        )
         # print(packet.summary())
         return packet
 
@@ -155,7 +159,7 @@ class IcmpData:
             id = packet[ICMP].id
             seq = packet[ICMP].seq
 
-            if not (int(code) == 114 and int(id) == 514 and int(seq) == 1919):
+            if not (int(code) == 114 and int(id) == 514):
                 return None
 
             load = packet[Raw].load
@@ -330,6 +334,6 @@ if __name__ == "__main__":
 
     i = 0
     while True:
-        pip = a.request(input("dst:"), 10086, (str(i) * 100).encode())
+        pip = a.request(input("dst:"), 10086, (str(i) * 2000).encode())
         print(pip.recv())
         i += 1
