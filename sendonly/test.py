@@ -1,7 +1,6 @@
-from multiprocessing.connection import PipeConnection
+from multiprocessing import Pipe
 from typing import Optional, Callable
 from scapy.all import IP, ICMP, Raw, send, AsyncSniffer, sniff
-from multiprocessing import Pipe
 import socket
 import threading
 import random
@@ -196,7 +195,7 @@ class IcmpCapture:
     抓包
     """
 
-    def __init__(self, send_to: PipeConnection):
+    def __init__(self, send_to):
         self.send_to = send_to
         self.listener = threading.Thread(
             target=lambda: sniff(
@@ -206,7 +205,7 @@ class IcmpCapture:
 
         self.listener.start()
 
-    def new() -> PipeConnection:
+    def new():
         r, w = Pipe()
         IcmpCapture(w)
         return r
@@ -225,13 +224,13 @@ class IcmpDataMerger:
     合并同一个 identifier 的数据包
     """
 
-    def __init__(self, recv: PipeConnection, send: PipeConnection):
+    def __init__(self, recv, send):
         self.recv = recv
         self.send = send
         self.buffer: dict[IcmpPacketFuture, tuple[int, list[IcmpData]]] = {}
         threading.Thread(target=self.merge_packets, daemon=True).start()
 
-    def new(recv: PipeConnection) -> PipeConnection:
+    def new(recv):
         r, w = Pipe()
         IcmpDataMerger(recv, w)
         return r
@@ -275,11 +274,11 @@ class IcmpHost:
     分离开不同端口
     """
 
-    def __init__(self, recv: PipeConnection):
+    def __init__(self, recv):
         self.seq_per_ip: dict[str, int] = {}
-        self.waiting_for_response: dict[IcmpPacketFuture, PipeConnection] = {}
+        self.waiting_for_response: dict[IcmpPacketFuture] = {}
         self.servers: dict[int, Callable] = {}
-        self.recv: PipeConnection = recv
+        self.recv = recv
 
         threading.Thread(target=self.handle_income, daemon=True).start()
 
@@ -288,14 +287,12 @@ class IcmpHost:
             raise ValueError("port already in use")
         self.servers[port] = callback
 
-    def request(self, dst: str, port: int, load: bytes) -> PipeConnection:
+    def request(self, dst: str, port: int, load: bytes):
         r, w = Pipe()
         self.request_to_pipe(dst, port, load, w)
         return r
 
-    def request_to_pipe(
-        self, dst: str, port: int, load: bytes, response_to: PipeConnection
-    ):
+    def request_to_pipe(self, dst: str, port: int, load: bytes, response_to):
         seq: int = self.seq_per_ip.get(dst, random.randint(0, 1 << 48))
         self.seq_per_ip[dst] = seq + 1
         packet = IcmpData(dst, port, IcmpPacketFuture(Local_ip, port, seq), load)
