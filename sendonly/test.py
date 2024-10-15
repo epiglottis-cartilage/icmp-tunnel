@@ -1,6 +1,6 @@
 from multiprocessing.connection import PipeConnection
 from typing import Optional, Callable
-from scapy.all import IP, ICMP, send, AsyncSniffer, sniff
+from scapy.all import IP, ICMP, Raw, send, AsyncSniffer, sniff
 from multiprocessing import Pipe
 
 # import time
@@ -58,9 +58,22 @@ class IcmpPacketFuture:
     def from_bytes(data: bytes) -> tuple["IcmpPacketFuture", bytes]:
         ip, data = data.split(b"%", 1)
         ip = ip.decode()
-        port = int.from_bytes(data[4:8], "big")
-        sequence = int.from_bytes(data[8:16], "big")
-        return IcmpPacketFuture(ip, port, sequence), data[16:]
+        port = int.from_bytes(data[:4], "big")
+        sequence = int.from_bytes(data[4:12], "big")
+        return IcmpPacketFuture(ip, port, sequence), data[12:]
+
+    def __str__(self):
+        return f"{self.ip}:{self.port}:{self.sequence}"
+
+    def __hash__(self):
+        return hash((self.ip, self.port, self.sequence))
+
+    def __eq__(self, other):
+        return (
+            self.ip == other.ip
+            and self.port == other.port
+            and self.sequence == other.sequence
+        )
 
 
 class IcmpData:
@@ -99,9 +112,14 @@ class IcmpData:
         return res
 
     def shrink(packets: list["IcmpData"]):
+        """
+        合并数据包
+        第一个为负数包
+        """
         if len(packets) == 0:
             raise ValueError("empty packet list")
-        packets.sort(key=lambda x: x.slice_cnt)
+        packets.sort(key=lambda x: x.data_slice_cnt)
+
         if -packets[0].data_slice_cnt != len(packets):
             raise ValueError("packet list is not complete")
 
@@ -140,11 +158,11 @@ class IcmpData:
             if not (int(code) == 114 and int(id) == 514 and int(seq) == 1919):
                 return None
 
-            icmp = packet[ICMP]
+            load = packet[Raw].load
 
-            indentifier, data = IcmpPacketFuture.from_bytes(icmp.data)
+            indentifier, data = IcmpPacketFuture.from_bytes(bytes(load))
             slice_cnt = int.from_bytes(data[:8], "big", signed=True)
-            res = IcmpData(src_ip, indentifier.port, indentifier, data)
+            res = IcmpData(src_ip, indentifier.port, indentifier, data[8:])
             res.data_slice_cnt = slice_cnt
             return res
         return None
@@ -152,6 +170,9 @@ class IcmpData:
     def response(self, load) -> "IcmpData":
         packet = IcmpData(self.identifier.ip, 0, self.identifier, load)
         return packet
+
+    def __str__(self):
+        return f"IcmpData({self.ip}:{self.port}, {self.identifier}, {self.data_slice_cnt}\n {self.load})"
 
 
 class IcmpCapture:
@@ -200,23 +221,25 @@ class IcmpDataMerger:
             except Exception as e:
                 print("IcmpDataMerger ending:", e)
                 break
-
+            # print("Merger recv", pack)
             identifier = pack.identifier
 
             if self.buffer.get(identifier) is None:
-                self.buffer[identifier] = (0, [])
+                self.buffer[identifier] = 0, []
 
-            buffer = self.buffer[identifier]
+            size, buffer = self.buffer[identifier]
 
-            if pack.data_slice_cn < 0:
-                pack.data_slice_cnt = buffer[0] = -pack.data_slice_cnt
+            if pack.data_slice_cnt < 0:
+                size = -pack.data_slice_cnt
 
-            buffer[1].append(pack)
+            buffer.append(pack)
 
-            if buffer[0] > 0 and len(buffer[1]) == buffer[0]:
-                buffer[1].sort(key=lambda x: x.data_slice_cnt)
+            self.buffer[identifier] = size, buffer
+
+            if size > 0 and len(buffer) == size:
+                buffer.sort(key=lambda x: x.data_slice_cnt)
                 try:
-                    self.send.send(IcmpData.shrink(buffer[1]))
+                    self.send.send(IcmpData.shrink(buffer))
                 except EOFError:
                     break
                 finally:
@@ -264,6 +287,8 @@ class IcmpHost:
                 pack: IcmpData = self.recv.recv()
             except Exception as e:
                 print("IcmpHost ending:", e)
+                break
+            print(pack)
             future = pack.to_future()
             if pack.port == 0:
                 if self.waiting_for_response.get(future) is not None:
@@ -275,6 +300,9 @@ class IcmpHost:
                     # self.waiting_for_response.pop(future)
                     del self.waiting_for_response[future]
             else:
+                if pack.port not in self.servers:
+                    print("IcmpHost: port not found", pack.port)
+                    continue
                 try:
                     threading.Thread(
                         target=lambda: self.send_response(
@@ -292,6 +320,6 @@ def display_server(request: IcmpData) -> bytes:
 
 if __name__ == "__main__":
     a = IcmpHost(IcmpDataMerger.new(IcmpCapture.new()))
-    a.bind(10068, display_server)
+    a.bind(10086, display_server)
 
-    a.request(input("dst:"), 10086, b"hello world" * 1000)
+    a.request(input("dst:"), 10086, b"hello world" * 10000)
