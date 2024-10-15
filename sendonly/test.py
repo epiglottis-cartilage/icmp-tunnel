@@ -78,7 +78,6 @@ class IcmpPacketFuture:
 
 class IcmpData:
     ip: str
-
     port: int
 
     identifier: IcmpPacketFuture
@@ -138,7 +137,8 @@ class IcmpData:
             raise ValueError("build packet too large")
 
         load = (
-            self.identifier.to_bytes()
+            self.port.to_bytes(4, "big")
+            + self.identifier.to_bytes()
             + self.data_slice_cnt.to_bytes(8, "big", signed=True)
             + self.load
         )
@@ -160,9 +160,11 @@ class IcmpData:
 
             load = packet[Raw].load
 
-            indentifier, data = IcmpPacketFuture.from_bytes(bytes(load))
+            port = int.from_bytes(load[:4], "big")
+            indentifier, data = IcmpPacketFuture.from_bytes(bytes(load[4:]))
+
             slice_cnt = int.from_bytes(data[:8], "big", signed=True)
-            res = IcmpData(src_ip, indentifier.port, indentifier, data[8:])
+            res = IcmpData(src_ip, port, indentifier, data[8:])
             res.data_slice_cnt = slice_cnt
             return res
         return None
@@ -324,3 +326,4 @@ if __name__ == "__main__":
     i = 0
     while True:
         a.request(input("dst:"), 10086, (str(i) * 100).encode())
+        i += 1
