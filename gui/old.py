@@ -3,12 +3,10 @@ from PyQt5.QtCore import pyqtSignal, QDateTime
 from PyQt5.QtWidgets import QApplication, QMainWindow, QPushButton, QTextEdit,\
     QVBoxLayout, QWidget, QHBoxLayout, QFrame, QLabel, QLineEdit, QShortcut
 from PyQt5.QtGui import QKeySequence
+from functools import partial
 
-import sendonly.icmp_util as icepack
+import util.icmp_util as icmplib
 
-Icepack_Client_Port = 10086
-
-#gui和util分离做不到喵～对不起，做不到喵～
 
 class Cust_QApplication(QApplication):
 
@@ -22,14 +20,10 @@ class Cust_QApplication(QApplication):
 
 
 
-
-class scrol_textarea(QWidget):
-    ''' a scrollable text area with an input box. '''
-
-    user_input_message = pyqtSignal(str)
-    
-    def __init__(self):
-        super().__init__()
+class ScrolTextarea(QWidget):
+    ''' A scrollable text area with an input box. '''
+    def __init__(self, parent):
+        super(ScrolTextarea, self).__init__(parent)
         self.main_layout = QVBoxLayout(self)
         # 创建 QTextEdit 组件
         self.log_text_edit = QTextEdit(self)
@@ -42,32 +36,44 @@ class scrol_textarea(QWidget):
         input_layout.addWidget(self.input_line_edit)
         # 创建 QPushButton 按钮
         self.send_button = QPushButton("发送", self)
-        self.send_button.clicked.connect(self.send_message)
+        self.send_button.clicked.connect(self.cust_send_message)  # 按钮点击事件连接到 send_message 方法
         input_layout.addWidget(self.send_button)
         # 将输入框和按钮布局添加到主布局
         self.main_layout.addLayout(input_layout, 1)
-        self.parent_widget_ptr = self.parentWidget()
+        self.input_line_edit.returnPressed.connect(self.cust_send_message)  # 回车键事件连接到 send_message 方法
 
-        #child widget signal
-        
+
     
+
     def send_message(self):
-        user_message = self.input_line_edit.text()
-        if user_message:  # 输入框不为空时才响应
-            timestamp = QDateTime.currentDateTime().toString("yyyy-MM-dd HH:mm:ss")
-            message = f"You ({timestamp}): {user_message}\n"
-            self.log_text_edit.append(message)
+        '''read text from the inputline field, send it and clear inputline
+        This method assume that you have already initialize the callback_function field. If not, a error raise
+        '''
+        message = self.input_line_edit.text()
+        if message:
+            current_time = QDateTime.currentDateTime().toString("yyyy-MM-dd hh:mm:ss")
+            formatted_message = f"<div style='text-align: right;'><small>You, {current_time}</small><p>{message}</p></div>"
+            self.log_text_edit.append(formatted_message)
             self.input_line_edit.clear()
+            return message
 
-            self.user_input_message.emit(user_message)
-            return user_message
+    def cust_send_message(self):
+        #read father field, sync icmp sr1
+        message = self.send_message()
+        parent = self.parentWidget().parentWidget()#you sick?????????
+        tgtip = parent.get_target_ip()
+        print(tgtip)
+        parent.icmpclient.sr1(load=str(message).encode(),dst=tgtip)
+        
 
 
+    def receive_message(self, message):
+        if message:
+            current_time = QDateTime.currentDateTime().toString("yyyy-MM-dd hh:mm:ss")
+            formatted_message = f"<div style='text-align: left;'><small>Other, {current_time}</small><p>{message}</p></div>"
+            self.log_text_edit.append(formatted_message)
+        
 
-    def receive_message(self, message, target_user):
-        timestamp = QDateTime.currentDateTime().toString("yyyy-MM-dd HH:mm:ss")
-        formatted_message = f"{target_user} ({timestamp}): {message}\n"
-        self.log_text_edit.append(formatted_message)
         
 
 
@@ -82,7 +88,7 @@ class Cust_QMainWindow(QMainWindow):
         self.setGeometry(100, 100, 800, 500)
 
         
-        self.dialog_box = scrol_textarea()
+        self.dialog_box = ScrolTextarea(self)
         self.button_frame = Cust_buttonframe()
 
 
@@ -93,11 +99,11 @@ class Cust_QMainWindow(QMainWindow):
 
 
         central_widget = QWidget(self)#again, why fill in self?
-        # 感觉像是在嵌套，widget才是本体，外面窗口就是个框架
+        # 感觉像是在嵌套，widget才message是本体，外面窗口就是个框架
         central_widget.setLayout(self.main_layout)
         self.setCentralWidget(central_widget)
         
-        self.button_frame.left.bind_newtgtbutton(self.open_ip_inputwindow)
+        self.bind_newtarget()
 
         self.new_tgt_shortcut = QShortcut(QKeySequence("n"), self)
         self.new_tgt_shortcut.activated.connect(self.open_ip_inputwindow)
@@ -105,42 +111,42 @@ class Cust_QMainWindow(QMainWindow):
         self.retry_shortcut = QShortcut(QKeySequence("r"), self)
         self.retry_shortcut.activated.connect(self.retry_connect)
 
-        #widget update father ip field
-        self.tgtip = "127.0.0.1"
+        self.bind_reconnect(self.update_diabox)
 
+        def icmp_handler_override(self, packet):
+            msg_content = icmplib.IcmpTunnel.default_cmd_handler(packet)
+            self.dialog_box.receive_message(msg_content)
+
+        self.icmpclient = icmplib.IcmpTunnel(partial(icmp_handler_override, self))
+
+        self.justatest = "string"
         
-        
-        #binding icmp layer
-        self.icepack_client = icepack.IcmpHost(icepack.IcmpDataMerger.new(icepack.IcmpCapture.new()))
-        #i don't understand here, but I just follow the docs
-        global Icepack_Client_Port
-        self.icepack_client.bind(Icepack_Client_Port, icepack.debug_server)
-        self.dialog_box.user_input_message.connect(self.icepack_send)
-        
-
-    def icepack_send(self, user_message:str):
-        global Icepack_Client_Port
-        self.icepack_client.request(dst=self.tgtip, port=Icepack_Client_Port, load=user_message.encode())
+    def get_target_ip(self) -> str:
+        return self.button_frame.right.get_tgtip()
 
 
+
+    def bind_newtarget(self):
+        self.button_frame.left.bind_newtgtbutton(self.open_ip_inputwindow)
+
+    def update_diabox(self):
+        self.dialog_box.receive_message("test")
+    
+    def bind_reconnect(self, callback_function):
+        self.button_frame.left.bind_retrybutton(callback_function)
+    
     def update_userip(self, status:str):
         self.button_frame.right.update_yourip(status) 
-
-
-
-    
+        
 
     
     def open_ip_inputwindow(self):
-        #b signal
         self.tmp_ipinput_window = IPInputWindow()
-        self.tmp_ipinput_window.input_ip.connect(self.update_tgtip)
+        self.tmp_ipinput_window.input_ip.connect(self.update_tgtip)# signal emit
         self.tmp_ipinput_window.show()
 
     def update_tgtip(self, ip):
-        '''solt function, receive para one: ip. child widget of cust_qt_mainwin call it.'''
         self.button_frame.right.update_tgtip(ip)
-        self.tgtip = ip
 
     def retry_connect(self):
         pass
@@ -206,11 +212,17 @@ class RightPart(QWidget):
         self.rightlayout.addWidget(self.upper)
         self.rightlayout.addWidget(self.down)
 
+    def get_yourip(self):
+        return self.upper.text().split(":")[-1]
+
+    def get_tgtip(self):
+        return self.down.text().split(":")[-1]
+
     def update_yourip(self, status:str):
-        self.upper.setText("Your IP: " + status)
+        self.upper.setText("Your IP:" + status)
 
     def update_tgtip(self, status:str):
-        self.down.setText("Target IP: " + status)
+        self.down.setText("Target IP:" + status)
     
 
 #这段也是屎
