@@ -288,7 +288,6 @@ class IcmpHost:
         self.servers[port] = callback
 
     def request(self, dst: str, port: int, load: bytes):
-        '''push a data pack to a Tunnel , '''
         r, w = Pipe()
         self.request_to_pipe(dst, port, load, w)
         return r
@@ -342,7 +341,7 @@ def debug_server(request: IcmpData) -> bytes:
     """
     server 接受IcmDdata, 返回bytes
     """
-    print("\n [Server] recv:", request.load.decode())
+    print("\n [Server] recv:", request)
     return (
         b"response to "
         + request.load[:5]
@@ -352,13 +351,10 @@ def debug_server(request: IcmpData) -> bytes:
 
 
 if __name__ == "__main__":
-    icepack_client = IcmpHost(IcmpDataMerger.new(IcmpCapture.new()))
-    icepack_client.bind(10086, debug_server)
+    a = IcmpHost(IcmpDataMerger.new(IcmpCapture.new()))
+    a.bind(10086, debug_server)
     i = 0
-    tgt_dst = input("dst:")
-
     while True:
-        packet_content = input("input packet content:")
-        pip = icepack_client.request(str(tgt_dst), 10086, str(packet_content).encode())
+        pip = a.request(input("dst:"), 10086, (str(i) * 2000).encode())
         print(pip.recv())
         i += 1

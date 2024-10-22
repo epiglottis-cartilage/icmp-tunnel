@@ -1,3 +1,4 @@
+#Deprecated
 from scapy.all import IP, ICMP, Raw, send, AsyncSniffer
 import random
 import time
