@@ -1,7 +1,8 @@
 ﻿from multiprocessing import Pipe
 import time
 from typing import Optional, Callable
-from scapy.all import IP, ICMP, Raw, send, AsyncSniffer, sniff
+from scapy.all import IP, ICMP, Raw
+import scapy.all
 import socket
 import threading
 import select
@@ -25,7 +26,7 @@ Local_ip_int = int.from_bytes(socket.inet_aton(Local_ip))
 
 LOAD_SIZE_LIMIT = 1415
 
-class IcmpIpPacket:
+class IcmpPacket:
     # 主要目的：
     # 1. 封装IP包
     # 2. 处理过大的数据包（分割和并）
@@ -52,7 +53,7 @@ class IcmpIpPacket:
     def __init__(self, src_ip:str, dst_ip:str, data:bytes) :
         self.src_ip = src_ip
         self.dst_ip = dst_ip
-        self.identifier = random.randint(0, 2**IcmpIpPacket.IDENTIFIER_BITS - 1)
+        self.identifier = random.randint(0, 2**IcmpPacket.IDENTIFIER_BITS - 1)
         self.slice_cnt = -1
         self.data = data
 
@@ -66,7 +67,7 @@ class IcmpIpPacket:
         ]
         res = []
         for i, data in enumerate(datas):
-            pac = IcmpIpPacket(self.src_ip,self.dst_ip,data)
+            pac = IcmpPacket(self.src_ip,self.dst_ip,data)
             # pac.src_ip = self.src_ip
             # pac.dst_ip = self.dst_ip
             pac.identifier = self.identifier
@@ -78,8 +79,7 @@ class IcmpIpPacket:
 
         return res
 
-    def merge(packets:list["IcmpIpPacket"]):
-
+    def merge(packets:list["IcmpPacket"]):
         packets.sort(key=lambda x: x.slice_cnt)
 
         identifier = packets[0].identifier
@@ -94,7 +94,7 @@ class IcmpIpPacket:
         for pac in packets[1:]:
             data += pac.data
 
-        res = IcmpIpPacket(packets[0].src_ip, packets[0].dst_ip, packets[0].data + data)
+        res = IcmpPacket(packets[0].src_ip, packets[0].dst_ip, packets[0].data + data)
         # res.src_ip = packets[0].src_ip
         # res.dst_ip = packets[0].dst_ip
         res.identifier = packets[0].identifier
@@ -118,7 +118,7 @@ class IcmpIpPacket:
         )
         return packet
     
-    def parse(packet:IP) -> Optional["IcmpIpPacket"]:
+    def parse(packet:IP) -> Optional["IcmpPacket"]:
         if packet.haslayer(ICMP):
             src_ip = packet[IP].src
             dst_ip = packet[IP].dst
@@ -132,22 +132,22 @@ class IcmpIpPacket:
 
             load = packet[Raw].load
 
-            identifier = int.from_bytes(load[:IcmpIpPacket.IDENTIFIER_BITS], "big")
-            slice_cnt = int.from_bytes(load[IcmpIpPacket.IDENTIFIER_BITS:IcmpIpPacket.IDENTIFIER_BITS+IcmpIpPacket.SLICE_CNT_BITS], "big", signed=True)
+            identifier = int.from_bytes(load[:IcmpPacket.IDENTIFIER_BITS], "big")
+            slice_cnt = int.from_bytes(load[IcmpPacket.IDENTIFIER_BITS:IcmpPacket.IDENTIFIER_BITS+IcmpPacket.SLICE_CNT_BITS], "big", signed=True)
 
-            res = IcmpIpPacket(src_ip,dst_ip, b"")
+            res = IcmpPacket(src_ip,dst_ip, b"")
             # res.src_ip = src_ip
             # res.dst_ip = dst_ip
             res.identifier = identifier
             res.slice_cnt = slice_cnt
-            res.data = load[IcmpIpPacket.IDENTIFIER_BITS+IcmpIpPacket.SLICE_CNT_BITS:]
+            res.data = load[IcmpPacket.IDENTIFIER_BITS+IcmpPacket.SLICE_CNT_BITS:]
             return res
         
         return None
     
     def build_and_send(self):
         for pack in self.split():
-            send(pack.build(), verbose=0)
+            scapy.all.send(pack.build(), verbose=0)
 
 
 class IcmpCapture:
@@ -158,12 +158,21 @@ class IcmpCapture:
     def __init__(self, send_to):
         self.send_to = send_to
         self.listener = threading.Thread(
-            target=lambda: sniff(
-                prn=self.handle_income, filter=f"icmp and (dst host {Local_ip})"
-            )
+            target=self.__start
         )
 
         self.listener.start()
+    
+    def __start(self):
+        try: 
+            scapy.all.sniff(
+                prn=self.handle_income, filter=f"icmp and (dst host {Local_ip})"
+            )
+        except PermissionError:
+            print("PermissionError, try sudo")
+            exit(1)
+        
+
 
     def new():
         r, w = Pipe()
@@ -171,7 +180,7 @@ class IcmpCapture:
         return r
 
     def handle_income(self, packet):
-        data = IcmpIpPacket.parse(packet)
+        data = IcmpPacket.parse(packet)
         # print("Icmp income:",data.src_ip,data.dst_ip,data.data)
         if data is not None:
             try:
@@ -188,7 +197,7 @@ class IcmpDataMerger:
     def __init__(self, recv, send):
         self.recv = recv
         self.send = send
-        self.buffer: dict[(str,int), tuple[int, list[IcmpIpPacket]]] = {}
+        self.buffer: dict[(str,int), tuple[int, list[IcmpPacket]]] = {}
         self.prase_to_tcp = False
 
         threading.Thread(target=self.merge_packets, daemon=True).start()
@@ -207,7 +216,7 @@ class IcmpDataMerger:
     ):
         while True:
             try:
-                pack: IcmpIpPacket = self.recv.recv()
+                pack: IcmpPacket = self.recv.recv()
             except Exception as e:
                 print("IcmpDataMerger ending:", e)
                 break
@@ -230,15 +239,15 @@ class IcmpDataMerger:
             if size > 0 and len(buffer) == size:
                 try:
                     if self.prase_to_tcp:
-                        self.send.send(IpTcpPacket.prase(IcmpIpPacket.merge(buffer)))
+                        self.send.send(TcpPacket.prase(IcmpPacket.merge(buffer)))
                     else:
-                        self.send.send(IcmpIpPacket.merge(buffer))
+                        self.send.send(IcmpPacket.merge(buffer))
                 except Exception as e:
                     print("IcmpDataMerger err:", e)
                 finally:
                     self.buffer.pop(identifier_with_ip)
 
-class IcmpIpPacketType:
+class TcpPacketType:
     # 客户端发送
     CLIENT_WANT_CONNECT = 1
     # 服务器发送
@@ -249,7 +258,7 @@ class IcmpIpPacketType:
     KILL_THIS = 4
     NORMAL = 255
         
-class IpTcpPacket:
+class TcpPacket:
     src_ip:str
     dst_ip:str
     src_port: int
@@ -269,24 +278,24 @@ class IpTcpPacket:
 
         self.pack_type = type
 
-    def build(self) -> IcmpIpPacket:
-        return IcmpIpPacket(self.src_ip, self.dst_ip,(
+    def build(self) -> IcmpPacket:
+        return IcmpPacket(self.src_ip, self.dst_ip,(
             self.src_port.to_bytes(self.PORT_BITS, "big")+
             self.dst_port.to_bytes(self.PORT_BITS, "big")+
             self.pack_type.to_bytes(1, "big")+
             self.data
         ))
         
-    def prase(packet:IcmpIpPacket) -> "IpTcpPacket":
-        if len(packet.data) < IpTcpPacket.PORT_BITS * 2 + 1:
+    def prase(packet:IcmpPacket) -> "TcpPacket":
+        if len(packet.data) < TcpPacket.PORT_BITS * 2 + 1:
             raise ValueError("Invalid packet size")
         
-        res = IpTcpPacket(src_ip=packet.src_ip,
+        res = TcpPacket(src_ip=packet.src_ip,
                           dst_ip=packet.dst_ip,
-                          src_port= int.from_bytes(packet.data[:IpTcpPacket.PORT_BITS], "big"),
-                          dst_port=int.from_bytes(packet.data[IpTcpPacket.PORT_BITS:IpTcpPacket.PORT_BITS*2], "big"),
-                          type=packet.data[IpTcpPacket.PORT_BITS*2],
-                          data=packet.data[IpTcpPacket.PORT_BITS*2+1:]
+                          src_port= int.from_bytes(packet.data[:TcpPacket.PORT_BITS], "big"),
+                          dst_port=int.from_bytes(packet.data[TcpPacket.PORT_BITS:TcpPacket.PORT_BITS*2], "big"),
+                          type=packet.data[TcpPacket.PORT_BITS*2],
+                          data=packet.data[TcpPacket.PORT_BITS*2+1:]
                           )
         print("Tcp incoming:",res.src_ip, res.src_port,"->",res.dst_ip, res.dst_port,res.pack_type ,":", res.data)
         return res
@@ -300,9 +309,9 @@ class IpTcpPacket:
     def from_identifier(identifier, data, type):
         ip1, ip2, port1, port2 = identifier
         if ip1 == Local_ip:
-            return IpTcpPacket(ip1, int(port1), ip2, int(port2), data, type)
+            return TcpPacket(ip1, int(port1), ip2, int(port2), data, type)
         else:
-            return IpTcpPacket(ip2, int(port2), ip1, int(port1), data, type)
+            return TcpPacket(ip2, int(port2), ip1, int(port1), data, type)
 
     def build_and_send(self):
         self.build().build_and_send()
@@ -317,9 +326,9 @@ class TcpStream:
     def read(self)->bytes:
         return self.incoming_pipe.recv()
     def write(self,data):
-        IpTcpPacket.from_identifier(self.identifier, data, IcmpIpPacketType.NORMAL).build_and_send()
+        TcpPacket.from_identifier(self.identifier, data, TcpPacketType.NORMAL).build_and_send()
     def close(self):
-        IpTcpPacket.from_identifier(self.identifier, b"close", IcmpIpPacketType.KILL_THIS).build_and_send()
+        TcpPacket.from_identifier(self.identifier, b"close", TcpPacketType.KILL_THIS).build_and_send()
         self.host.connected_stream.pop(self.identifier)
         
 
@@ -338,16 +347,16 @@ class TcpHost:
     def _handle_income(self, recv):
         while True:
             try:
-                pack:IpTcpPacket = recv.recv()
-                if pack.pack_type == IcmpIpPacketType.CLIENT_WANT_CONNECT:
+                pack:TcpPacket = recv.recv()
+                if pack.pack_type == TcpPacketType.CLIENT_WANT_CONNECT:
                     if self.local_servers.get(pack.dst_port) is not None:
-                        IpTcpPacket(pack.dst_ip, pack.dst_port, pack.src_ip, pack.src_port, b"200", IcmpIpPacketType.SERVER_OK_CONNECTED).build_and_send()
+                        TcpPacket(pack.dst_ip, pack.dst_port, pack.src_ip, pack.src_port, b"200", TcpPacketType.SERVER_OK_CONNECTED).build_and_send()
                         self.waiting_for_connect.add(pack.identifier())
                     else:
-                        IpTcpPacket(pack.dst_ip, pack.dst_port, pack.src_ip, pack.src_port, b"404", IcmpIpPacketType.KILL_THIS).build_and_send()
+                        TcpPacket(pack.dst_ip, pack.dst_port, pack.src_ip, pack.src_port, b"404", TcpPacketType.KILL_THIS).build_and_send()
                         
                     
-                elif pack.pack_type == IcmpIpPacketType.SERVER_OK_CONNECTED:
+                elif pack.pack_type == TcpPacketType.SERVER_OK_CONNECTED:
                     if pack.identifier() in self.waiting_for_connect:
                         self.waiting_for_connect.remove(pack.identifier())
 
@@ -356,11 +365,11 @@ class TcpHost:
 
                         self.connected_stream[pack.identifier()] = w
                         self.local_servers[pack.dst_port].send(stream)
-                        IpTcpPacket(pack.dst_ip, pack.dst_port, pack.src_ip, pack.src_port, b"200", IcmpIpPacketType.CONNECTED_CONFIRM).build_and_send()
+                        TcpPacket(pack.dst_ip, pack.dst_port, pack.src_ip, pack.src_port, b"200", TcpPacketType.CONNECTED_CONFIRM).build_and_send()
                     else:
-                        IpTcpPacket(pack.dst_ip, pack.dst_port, pack.src_ip, pack.src_port, b"405", IcmpIpPacketType.KILL_THIS).build_and_send()
+                        TcpPacket(pack.dst_ip, pack.dst_port, pack.src_ip, pack.src_port, b"405", TcpPacketType.KILL_THIS).build_and_send()
                 
-                elif pack.pack_type == IcmpIpPacketType.CONNECTED_CONFIRM:
+                elif pack.pack_type == TcpPacketType.CONNECTED_CONFIRM:
                     if pack.identifier() in self.waiting_for_connect:
                         self.waiting_for_connect.remove(pack.identifier())
                         
@@ -370,20 +379,20 @@ class TcpHost:
                         self.connected_stream[pack.identifier()] = w
                         self.local_servers[pack.dst_port].send(stream)
                     else:
-                        IpTcpPacket(pack.dst_ip, pack.dst_port, pack.src_ip, pack.src_port, b"406", IcmpIpPacketType.KILL_THIS).build_and_send()
+                        TcpPacket(pack.dst_ip, pack.dst_port, pack.src_ip, pack.src_port, b"406", TcpPacketType.KILL_THIS).build_and_send()
 
                     
-                elif pack.pack_type == IcmpIpPacketType.KILL_THIS:
+                elif pack.pack_type == TcpPacketType.KILL_THIS:
                     if self.connected_stream.get(pack.identifier()) is not None:
                         self.connected_stream.pop(pack.identifier())
                 
-                elif pack.pack_type == IcmpIpPacketType.NORMAL:
+                elif pack.pack_type == TcpPacketType.NORMAL:
                     if self.connected_stream.get(pack.identifier()) is not None:
                         self.connected_stream[pack.identifier()].send(pack.data)
                     else:
                         print("Tcp Unknown identifier", pack.identifier())
                         self.connected_stream[pack.identifier()].send(pack.data)
-                        IpTcpPacket(pack.dst_ip, pack.dst_port, pack.src_ip, pack.src_port, b"407", IcmpIpPacketType.KILL_THIS).build_and_send()
+                        TcpPacket(pack.dst_ip, pack.dst_port, pack.src_ip, pack.src_port, b"407", TcpPacketType.KILL_THIS).build_and_send()
                         
             except Exception as e:
                 print("TcpHost ending:", e)
@@ -398,14 +407,14 @@ class TcpHost:
         return r
 
     def connect(self, dst_ip:str, dst_port:int):
-        port = random.randint(1024, 2**IpTcpPacket.PORT_BITS - 1)
+        port = random.randint(1024, 2**TcpPacket.PORT_BITS - 1)
 
         while self.local_servers.get(port) is not None:
-            port = random.randint(1024, 2**IpTcpPacket.PORT_BITS - 1)
+            port = random.randint(1024, 2**TcpPacket.PORT_BITS - 1)
 
         port_binder = self.listen(port)
 
-        pack = IpTcpPacket(Local_ip, port, dst_ip, dst_port, b"0", IcmpIpPacketType.CLIENT_WANT_CONNECT)
+        pack = TcpPacket(Local_ip, port, dst_ip, dst_port, b"0", TcpPacketType.CLIENT_WANT_CONNECT)
         self.waiting_for_connect.add(pack.identifier())
         pack.build_and_send()
 
@@ -426,14 +435,13 @@ class TcpHost:
 
 def echo_server(incoming_streams):
     while True:
+        stream:TcpStream = incoming_streams.recv()
         try:
-            stream:TcpStream = incoming_streams.recv()
             while True:
                 data = stream.read()
                 stream.write(b">>>BACK<<<"+data)
         except Exception as e:
-            print("echo_server ending:", e)
-            break
+            pass
         finally:
             stream.close()
 
