@@ -19,6 +19,7 @@ fn handle(broadcast4: Option<Ipv4Addr>, broadcast6: Option<Ipv6Addr>) {
 
     #[allow(invalid_value)]
     let mut buffer: [u8; 9001] = unsafe { std::mem::MaybeUninit::uninit().assume_init() };
+    #[cfg(not(debug_assertions))]
     thread::spawn(|| {
         loop {
             eprintln!(".");

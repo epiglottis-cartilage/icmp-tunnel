@@ -12,7 +12,7 @@ fn handle(broadcast4: Option<Ipv4Addr>, broadcast6: Option<Ipv6Addr>) {
     let mut queue = Queue::open().expect("Failed to open queue");
     queue.bind(QUE).expect("Run as admin?");
     eprintln!("[info] listen to queue {}", QUE);
-
+    #[cfg(not(debug_assertions))]
     thread::spawn(|| {
         loop {
             eprintln!(".");

@@ -1,0 +1,45 @@
+#!/usr/sbin/nft -f
+
+flush table inet filter
+
+define NFQ_NUM = 472
+
+table inet filter {
+    set v4_net {
+        type ipv4_addr
+        flags interval
+        elements = { 10.0.0.0/8 }
+    }
+
+    set v6_net {
+        type ipv6_addr
+        flags interval
+        elements = { 2001:da8:2029::/48 }
+    }
+
+    chain input {
+        type filter hook input priority filter; policy accept;
+
+        ip saddr @v4_net meta l4proto icmp \
+            queue num $NFQ_NUM
+
+        ip6 saddr @v6_net meta l4proto icmpv6 \
+            queue num $NFQ_NUM
+    }
+
+    chain output {
+        type filter hook output priority filter; policy accept;
+
+        ip daddr @v4_net meta l4proto { tcp, udp } \
+            queue num $NFQ_NUM
+
+        ip daddr 255.255.255.255 meta l4proto udp \
+            queue num $NFQ_NUM
+
+        ip6 daddr @v6_net meta l4proto { tcp, udp } \
+            queue num $NFQ_NUM
+
+        ip6 daddr ff00::/8 meta l4proto udp \
+            queue num $NFQ_NUM
+    }
+}
