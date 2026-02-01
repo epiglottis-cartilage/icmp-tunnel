@@ -1,0 +1,1 @@
+sudo nft delete table inet filter

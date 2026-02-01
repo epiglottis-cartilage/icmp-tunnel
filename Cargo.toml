@@ -1,0 +1,9 @@
+[workspace]
+members = ["core", "unix", "win"]
+resolver = "3"
+
+[profile.release]
+opt-level = 's'
+lto = "thin"
+codegen-units = 1
+panic = "abort"
