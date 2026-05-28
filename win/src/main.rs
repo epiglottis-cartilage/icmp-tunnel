@@ -3,9 +3,9 @@ use core::{ipv4, ipv6};
 use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
     str::FromStr,
-    thread,
-    time::Duration,
 };
+#[cfg(not(debug_assertions))]
+use std::{thread, time::Duration};
 use windivert::prelude::{WinDivert, WinDivertFlags};
 use windivert_sys::ChecksumFlags;
 

@@ -3,9 +3,9 @@ use nfq::{Queue, Verdict};
 use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
     str::FromStr,
-    thread,
-    time::Duration,
 };
+#[cfg(not(debug_assertions))]
+use std::{thread, time::Duration};
 const QUE: u16 = 472;
 
 fn handle(broadcast4: Option<Ipv4Addr>, broadcast6: Option<Ipv6Addr>) {
